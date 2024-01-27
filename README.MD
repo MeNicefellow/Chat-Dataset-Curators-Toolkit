@@ -41,10 +41,12 @@ Instruction following and chat datasets can both be seen as a system information
     sys_prefix = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions."
     user_prefix = "\n\nUSER: "
     assist_prefix = "\nASSISTANT: "
-    original_datasets = [('alpaca',"yahma/alpaca-cleaned"), ('sharegpt',"erfanzar/ShareGPT4")]
+    original_datasets = [('alpaca','teknium/GPTeacher-General-Instruct','input','response','instruction'),('alpaca','cognitivecomputations/dolphin,flan1m-alpaca-uncensored'),('alpaca','truthful_qa',None,'best_answer','question'),('sharegpt', "erfanzar/ShareGPT4")]
 
     convert_datasets(original_datasets, sys_prefix, user_prefix, assist_prefix)
    ```
+
+Please check the details in the `original_datasets` variable to see how to handle different situations.
 
 The aforementioned example will convert the datasets into Vicuna-1.1 format. The converted datasets will be combined to a DatasetDict and returned.
 
