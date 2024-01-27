@@ -4,6 +4,10 @@
 ## Overview
 The Unified Chat Dataset Converter is a tool designed to standardize various instruction/chat datasets into a single, unified format and then filter it with LLM-based chatbots. This project aims to facilitate research and development in Large Language Models by providing a consistent structure for diverse datasets.
 
+Instruction following and chat datasets can both be seen as a system information followed by n rounds of user and assistant speeches. However, different formats are used for different datasets, which makes it difficult to train on them with a uniform format. The Unified Chat Dataset Converter in the toolkit aims to solve this problem by converting various datasets into a unified format.
+
+
+
 ## Features
 - **Prefix Customization:** Users can specify prefixes for system information, user inputs, and AI replies, ensuring compatibility with different processing models.
 - **Broad Compatibility:** Offers functions to convert various original datasets available on Huggingface to the unified format.
@@ -32,6 +36,7 @@ The Unified Chat Dataset Converter is a tool designed to standardize various ins
 
    Example:
    ```python
+    from Dataset_unifier import convert_datasets
 
     sys_prefix = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions."
     user_prefix = "\n\nUSER: "
@@ -48,6 +53,7 @@ The aforementioned example will convert the datasets into Vicuna-1.1 format. The
 List of types of datasets from Huggingface that are currently supported by this tool:
 - Alpaca
 - ShareGPT
+- Capybara
 - ...
 
 
