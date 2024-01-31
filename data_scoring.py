@@ -2,7 +2,7 @@ import requests
 import random
 import json
 from datasets import load_dataset, Dataset, DatasetDict
-
+import multiprocessing
 from tqdm import tqdm
 
 
@@ -62,23 +62,40 @@ def score_sample(sample,host_add,api_key):
         f.close()
     return res
 
-def score_dataset(dataset,host_add,api_key):
+def worker(samples):
+    return [score_sample(sample, host_add, api_key) for sample in samples]
+
+def score_dataset(dataset, host_add, api_key):
     res = {}
     dataset_dict = load_dataset(dataset)
     so_far = 0
     failed = 0
+    num_processes = multiprocessing.cpu_count()
+
     for split_name, split_dataset in dataset_dict.items():
-        res[split_name] = {'text':[],'score':[],'rationale':[]}
-        print("Split: ",split_name)
-        for sample in tqdm(split_dataset['text']):
+        res[split_name] = {'text':[], 'score':[], 'rationale':[]}
+        print("Split: ", split_name)
+
+        # Split the dataset into chunks
+        samples = split_dataset['text']
+        chunks = [samples[i::num_processes] for i in range(num_processes)]
+
+        # Create a pool of worker processes
+        with multiprocessing.Pool(num_processes) as pool:
+            results = pool.map(worker, chunks)
+
+        # Merge the results
+        results = [result for chunk_results in results for result in chunk_results]
+
+        for sample, score_ana in zip(samples, results):
             so_far += 1
-            score_ana = score_sample(sample,host_add,api_key)
             if score_ana['score'] == 0:
                 failed += 1
                 print(f"Failure rate so far: {failed/so_far:.2%}")
             res[split_name]['text'].append(sample)
             res[split_name]['score'].append(score_ana['score'])
             res[split_name]['rationale'].append(score_ana['rationale'])
+
     for split_name, split_dataset in res.items():
         res[split_name] = Dataset.from_dict(split_dataset)
 
