@@ -62,7 +62,7 @@ def score_sample(sample,host_add,api_key):
         f.close()
     return res
 
-def worker(samples):
+def worker(samples, host_add, api_key):
     return [score_sample(sample, host_add, api_key) for sample in samples]
 
 def score_dataset(dataset, host_add, api_key):
@@ -70,7 +70,7 @@ def score_dataset(dataset, host_add, api_key):
     dataset_dict = load_dataset(dataset)
     so_far = 0
     failed = 0
-    num_processes = multiprocessing.cpu_count()
+    num_processes = multiprocessing.cpu_count()//2
 
     for split_name, split_dataset in dataset_dict.items():
         res[split_name] = {'text':[], 'score':[], 'rationale':[]}
@@ -82,7 +82,8 @@ def score_dataset(dataset, host_add, api_key):
 
         # Create a pool of worker processes
         with multiprocessing.Pool(num_processes) as pool:
-            results = pool.map(worker, chunks)
+            # Use tqdm to show progress
+            results = list(tqdm(pool.imap(worker, chunks, host_add, api_key), total=len(chunks)))
 
         # Merge the results
         results = [result for chunk_results in results for result in chunk_results]
