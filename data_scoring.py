@@ -57,7 +57,9 @@ def score_sample(sample,host_add,api_key):
         res = json.loads(res)
     except:
         res = {'score':0,'rationale':'Failed to score'}
-        print("============\nFailed to score: ",sample,'\n-----------\nwith response: ',request.json()['choices'][0]['text'])
+        f = open("failed_samples.txt", "a",encoding='utf-8')
+        f.write(f"Failed to score: {sample}\n-----------\nwith response: {request.json()['choices'][0]['text']}\n")
+        f.close()
     return res
 
 def score_dataset(dataset,host_add,api_key):
