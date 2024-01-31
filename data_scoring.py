@@ -5,6 +5,8 @@ from datasets import load_dataset, Dataset, DatasetDict
 import multiprocessing
 from tqdm import tqdm
 
+import os
+import pickle
 
 def score_sample(sample,host_add,api_key):
     max_tokens = 1024
@@ -62,19 +64,36 @@ def score_sample(sample,host_add,api_key):
         f.close()
     return res
 
-def worker(samples, host_add, api_key):
-    return [score_sample(sample, host_add, api_key) for sample in samples]
+def worker(samples, host_add, api_key, scored_samples):
+    results = []
+    for i, sample in enumerate(samples):
+        if sample not in scored_samples:
+            results.append(score_sample(sample, host_add, api_key))
+            if (i+1) % 500 == 0:
+                yield results
+                results = []
+    yield results
 
 def score_dataset(dataset, host_add, api_key):
     res = {}
+    nam = dataset.split('/')[1]
+    intermediate_results = f'intermediate_results_{nam}.pkl'
+    if os.path.exists(intermediate_results):
+        with open(intermediate_results, 'rb') as f:
+            res = pickle.load(f)
+
     dataset_dict = load_dataset(dataset)
     so_far = 0
     failed = 0
     num_processes = multiprocessing.cpu_count()//2
 
     for split_name, split_dataset in dataset_dict.items():
-        res[split_name] = {'text':[], 'score':[], 'rationale':[]}
+        if split_name not in res:
+            res[split_name] = {'text':[], 'score':[], 'rationale':[]}
         print("Split: ", split_name)
+
+        # Convert scored_samples to a set for efficient membership checking
+        scored_samples = set(res[split_name]['text'])
 
         # Split the dataset into chunks
         samples = split_dataset['text']
@@ -83,19 +102,23 @@ def score_dataset(dataset, host_add, api_key):
         # Create a pool of worker processes
         with multiprocessing.Pool(num_processes) as pool:
             # Use tqdm to show progress
-            results = list(tqdm(pool.imap(worker, chunks, host_add, api_key), total=len(chunks)))
+            for chunk in chunks:
+                for results in tqdm(pool.imap(worker, chunk, host_add, api_key, scored_samples), total=len(chunk)//500):
+                    # Merge the results
+                    results = [result for chunk_results in results for result in chunk_results]
 
-        # Merge the results
-        results = [result for chunk_results in results for result in chunk_results]
+                    for sample, score_ana in zip(samples, results):
+                        so_far += 1
+                        if score_ana['score'] == 0:
+                            failed += 1
+                            print(f"Failure rate so far: {failed/so_far:.2%}")
+                        res[split_name]['text'].append(sample)
+                        res[split_name]['score'].append(score_ana['score'])
+                        res[split_name]['rationale'].append(score_ana['rationale'])
 
-        for sample, score_ana in zip(samples, results):
-            so_far += 1
-            if score_ana['score'] == 0:
-                failed += 1
-                print(f"Failure rate so far: {failed/so_far:.2%}")
-            res[split_name]['text'].append(sample)
-            res[split_name]['score'].append(score_ana['score'])
-            res[split_name]['rationale'].append(score_ana['rationale'])
+                    # Save intermediate results after each 500 samples
+                    with open(intermediate_results, 'wb') as f:
+                        pickle.dump(res, f)
 
     for split_name, split_dataset in res.items():
         res[split_name] = Dataset.from_dict(split_dataset)
