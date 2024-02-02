@@ -4,11 +4,11 @@ import json
 from datasets import load_dataset, Dataset, DatasetDict
 import multiprocessing
 from tqdm import tqdm
-
+from functools import partial
 import os
 import pickle
 
-def score_sample(sample,host_add,api_key):
+def score_sample(sample,host_add,api_key,backend = 'vllm'):
     max_tokens = 1024
     min_p = 0.9
     top_k = 1
@@ -25,22 +25,37 @@ def score_sample(sample,host_add,api_key):
 
 
     prompt = inst_beg + instruction + sample + inst_end + appended_str
-
-    payload = {
-        "prompt": prompt,
-        "model": "gpt-3.5-turbo-instruct",
-        "max_tokens": max_tokens,
-        "n_predict": max_tokens,
-        "min_p": min_p,
-        "stream": False,
-        "seed": random.randint(
-            1000002406736107, 3778562406736107
-        ),  # Was acting weird without this
-        "top_k": top_k,
-        "top_p": top_p,
-        "stop": ["</s>", inst_beg, inst_end],
-        "temperature": temperature,
-    }
+    if backend == 'vllm':
+        payload = {
+            "prompt": prompt,
+            "model": "/workspace/text-generation-webui2/models/TheBloke_Mistral-7B-Instruct-v0.2-AWQ",
+            "max_tokens": max_tokens,
+            "min_p": min_p,
+            "stream": False,
+            "seed": random.randint(
+                1000002406736107, 3778562406736107
+            ),  # Was acting weird without this
+            "top_k": top_k,
+            "top_p": top_p,
+            "stop": ["</s>", inst_beg, inst_end],
+            "temperature": temperature,
+        }
+    else:
+        payload = {
+            "prompt": prompt,
+            "model": "gpt-3.5-turbo-instruct",
+            "max_tokens": max_tokens,
+            "n_predict": max_tokens,
+            "min_p": min_p,
+            "stream": False,
+            "seed": random.randint(
+                1000002406736107, 3778562406736107
+            ),  # Was acting weird without this
+            "top_k": top_k,
+            "top_p": top_p,
+            "stop": ["</s>", inst_beg, inst_end],
+            "temperature": temperature,
+        }
 
     request = requests.post(
         host_add,
@@ -57,22 +72,18 @@ def score_sample(sample,host_add,api_key):
         res = request.json()['choices'][0]['text']
         res = appended_str+res
         res = json.loads(res)
+        res['sample'] = sample
     except:
-        res = {'score':0,'rationale':'Failed to score'}
+        res = {'sample': sample,'score':0,'rationale':'Failed to score'}
         f = open("failed_samples.txt", "a",encoding='utf-8')
         f.write(f"Failed to score: {sample}\n-----------\nwith response: {request.json()['choices'][0]['text']}\n")
         f.close()
     return res
 
-def worker(samples, host_add, api_key, scored_samples):
+def worker(sample, host_add, api_key):
     results = []
-    for i, sample in enumerate(samples):
-        if sample not in scored_samples:
-            results.append(score_sample(sample, host_add, api_key))
-            if (i+1) % 500 == 0:
-                yield results
-                results = []
-    yield results
+    results.append(score_sample(sample, host_add, api_key))
+    return results
 
 def score_dataset(dataset, host_add, api_key):
     res = {}
@@ -85,40 +96,51 @@ def score_dataset(dataset, host_add, api_key):
     dataset_dict = load_dataset(dataset)
     so_far = 0
     failed = 0
-    num_processes = multiprocessing.cpu_count()//2
+    num_processes = 16#multiprocessing.cpu_count()//2
+    chunk_size = 500
 
     for split_name, split_dataset in dataset_dict.items():
         if split_name not in res:
             res[split_name] = {'text':[], 'score':[], 'rationale':[]}
         print("Split: ", split_name)
 
-        # Convert scored_samples to a set for efficient membership checking
-        scored_samples = set(res[split_name]['text'])
+        # Determine how many samples have already been scored
+        num_scored_samples = len(res[split_name]['text'])
+
+        # Calculate the number of chunks to skip
+        num_chunks_to_skip = num_scored_samples // chunk_size
 
         # Split the dataset into chunks
         samples = split_dataset['text']
-        chunks = [samples[i::num_processes] for i in range(num_processes)]
+        chunks = [samples[i:i+chunk_size] for i in range(0, len(samples), chunk_size)]
+
+        # Skip the chunks of already scored samples
+        chunks = chunks[num_chunks_to_skip:]
 
         # Create a pool of worker processes
         with multiprocessing.Pool(num_processes) as pool:
+            # Create a partial function with fixed arguments
+            worker_func = partial(worker, host_add=host_add, api_key=api_key)
+
             # Use tqdm to show progress
-            for chunk in chunks:
-                for results in tqdm(pool.imap(worker, chunk, host_add, api_key, scored_samples), total=len(chunk)//500):
-                    # Merge the results
-                    results = [result for chunk_results in results for result in chunk_results]
+            for chunk in tqdm(chunks):
+                results = pool.map(worker_func, chunk)
 
-                    for sample, score_ana in zip(samples, results):
-                        so_far += 1
-                        if score_ana['score'] == 0:
-                            failed += 1
-                            print(f"Failure rate so far: {failed/so_far:.2%}")
-                        res[split_name]['text'].append(sample)
-                        res[split_name]['score'].append(score_ana['score'])
-                        res[split_name]['rationale'].append(score_ana['rationale'])
+                # Merge the results
+                results = [result for chunk_results in results for result in chunk_results]
 
-                    # Save intermediate results after each 500 samples
-                    with open(intermediate_results, 'wb') as f:
-                        pickle.dump(res, f)
+                for score_ana in results:
+                    so_far += 1
+                    if score_ana['score'] == 0:
+                        failed += 1
+                        print(f"Failure rate so far: {failed/so_far:.2%}")
+                    res[split_name]['text'].append(score_ana['sample'])
+                    res[split_name]['score'].append(score_ana['score'])
+                    res[split_name]['rationale'].append(score_ana['rationale'])
+
+                # Save intermediate results after each chunk
+                with open(intermediate_results, 'wb') as f:
+                    pickle.dump(res, f)
 
     for split_name, split_dataset in res.items():
         res[split_name] = Dataset.from_dict(split_dataset)
