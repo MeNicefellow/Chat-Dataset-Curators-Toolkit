@@ -1,5 +1,4 @@
-import requests
-import random
+
 import json
 from datasets import load_dataset, Dataset, DatasetDict
 import multiprocessing
@@ -7,13 +6,9 @@ from tqdm import tqdm
 from functools import partial
 import os
 import pickle
+from utils import ask_LLM
 
 def score_sample(sample,host_add,api_key,backend = 'vllm'):
-    max_tokens = 1024
-    min_p = 0.9
-    top_k = 1
-    top_p = 0.9
-    temperature=0.8
 
     inst_beg = "[INST]"
     inst_end = "[/INST]"
@@ -25,51 +20,8 @@ def score_sample(sample,host_add,api_key,backend = 'vllm'):
 
 
     prompt = inst_beg + instruction + sample + inst_end + appended_str
-    if backend == 'vllm':
-        payload = {
-            "prompt": prompt,
-            "model": "/workspace/text-generation-webui2/models/TheBloke_Mistral-7B-Instruct-v0.2-AWQ",
-            "max_tokens": max_tokens,
-            "min_p": min_p,
-            "stream": False,
-            "seed": random.randint(
-                1000002406736107, 3778562406736107
-            ),  # Was acting weird without this
-            "top_k": top_k,
-            "top_p": top_p,
-            "stop": ["</s>", inst_beg, inst_end],
-            "temperature": temperature,
-        }
-    else:
-        payload = {
-            "prompt": prompt,
-            "model": "gpt-3.5-turbo-instruct",
-            "max_tokens": max_tokens,
-            "n_predict": max_tokens,
-            "min_p": min_p,
-            "stream": False,
-            "seed": random.randint(
-                1000002406736107, 3778562406736107
-            ),  # Was acting weird without this
-            "top_k": top_k,
-            "top_p": top_p,
-            "stop": ["</s>", inst_beg, inst_end],
-            "temperature": temperature,
-        }
-
-    request = requests.post(
-        host_add,
-        headers={
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        json=payload,
-        timeout=360,
-        stream=False,
-    )
     try:
-        res = request.json()['choices'][0]['text']
+        res = ask_LLM(prompt,host_add,api_key=)
         res = appended_str+res
         res = json.loads(res)
         res['sample'] = sample
@@ -96,7 +48,7 @@ def score_dataset(dataset, host_add, api_key):
     dataset_dict = load_dataset(dataset)
     so_far = 0
     failed = 0
-    num_processes = 16#multiprocessing.cpu_count()//2
+    num_processes = 1#multiprocessing.cpu_count()//2
     chunk_size = 500
 
     for split_name, split_dataset in dataset_dict.items():
